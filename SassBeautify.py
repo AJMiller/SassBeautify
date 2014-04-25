@@ -61,8 +61,8 @@ class SassBeautifyReplaceTextCommand(sublime_plugin.TextCommand):
     A Text Command to replace the entire view with new text.
     '''
 
-    def run(self, edit, text=None):
-        self.view.replace(edit, sublime.Region(0, self.view.size()), text)
+    def run(self, edit, text=None, region=None):
+        self.view.replace(edit, sublime.Region(region[0], region[1]), text)
 
 
 class SassBeautifyEvents(sublime_plugin.EventListener):
@@ -132,6 +132,15 @@ class SassBeautifyCommand(sublime_plugin.TextCommand):
         '''
         Runs the sass beautify command.
         '''
+
+        if len(self.view.sel()) > 1:
+            return self.error_message(
+                'Unable to beautify multiple selections.'
+            )
+
+        self.find_region()
+        self.find_indentation()
+
         thread = ExecSassCommand(
             self.get_cmd(),
             self.get_env(),
@@ -139,6 +148,27 @@ class SassBeautifyCommand(sublime_plugin.TextCommand):
         )
         thread.start()
         self.check_thread(thread)
+
+    def find_region(self):
+        '''
+        If a user has part of the file selected, then we'll use that region, else
+        we'll use the entire file.
+        '''
+
+        # Default, use entire view
+        self.region = sublime.Region(0, self.view.size())
+
+        # Get first selected region
+        selected_region = self.view.sel()[0]
+        if not selected_region.empty():
+            self.region = self.view.line(selected_region)
+
+    def find_indentation(self):
+        self.indentation = ''
+        line_contents = self.view.substr(self.region)
+        p = re.compile(r'^(\s+)[^\s]+.*', re.DOTALL)
+        if re.match(p, line_contents) is not None:
+            self.indentation = re.sub(p, r'\1', line_contents)
 
     def check_thread(self, thread, i=0, dir=1):
         '''
@@ -186,8 +216,24 @@ class SassBeautifyCommand(sublime_plugin.TextCommand):
         # Fixes issue on windows with Sass < v3.2.10.
         output = '\n'.join(output.splitlines())
 
+        print(self.indentation);
+        # print(output);
+
+        lines = output.splitlines()
+        text = ''
+        for i, line in enumerate(lines):
+            print(line)
+            text += self.indentation + line;
+            if (i+1) is not len(lines):
+                text += '\n'
+
+        # print(text)
+
         # Update the text in the editor
-        self.view.run_command('sass_beautify_replace_text', {'text': output})
+        self.view.run_command('sass_beautify_replace_text', {
+            'text': text,
+            'region': [self.region.a, self.region.b],
+        })
 
         # Save the file
         sublime.set_timeout(self.save, 1)
@@ -252,7 +298,7 @@ class SassBeautifyCommand(sublime_plugin.TextCommand):
         '''
         Gets the sass text from the Sublime view.
         '''
-        return self.view.substr(sublime.Region(0, self.view.size())).encode('utf-8')
+        return self.view.substr(self.region).encode('utf-8')
 
     def save(self):
         '''
